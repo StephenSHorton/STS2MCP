@@ -1,6 +1,9 @@
+using System;
 using System.Collections.Generic;
+using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 
@@ -56,6 +59,7 @@ public static partial class McpMod
         else if (currentRoom is EventRoom)
         {
             result["state_type"] = "event";
+            result["event"] = BuildGhostEventState(ghost);
         }
         else if (currentRoom is MerchantRoom)
         {
@@ -86,6 +90,56 @@ public static partial class McpMod
         result["players"] = BuildAllPlayersState(runState);
 
         return result;
+    }
+
+    /// <summary>
+    /// Build event state from the ghost's perspective using EventSynchronizer.
+    /// </summary>
+    private static Dictionary<string, object?> BuildGhostEventState(MegaCrit.Sts2.Core.Entities.Players.Player ghost)
+    {
+        var eventInfo = new Dictionary<string, object?>();
+        try
+        {
+            var eventSync = RunManager.Instance.EventSynchronizer;
+            if (eventSync == null)
+            {
+                eventInfo["error"] = "EventSynchronizer not available";
+                return eventInfo;
+            }
+
+            var eventModel = eventSync.GetEventForPlayer(ghost);
+            if (eventModel == null)
+            {
+                eventInfo["error"] = "No event for ghost player";
+                return eventInfo;
+            }
+
+            eventInfo["name"] = SafeGetText(() => eventModel.Title) ?? "Unknown Event";
+            eventInfo["is_shared"] = eventSync.IsShared;
+
+            var options = new List<Dictionary<string, object?>>();
+            if (eventModel.CurrentOptions != null)
+            {
+                for (int i = 0; i < eventModel.CurrentOptions.Count; i++)
+                {
+                    var opt = eventModel.CurrentOptions[i];
+                    options.Add(new Dictionary<string, object?>
+                    {
+                        ["index"] = i,
+                        ["text"] = SafeGetText(() => opt.Title) ?? $"Option {i}",
+                        ["description"] = SafeGetText(() => opt.Description) ?? "",
+                        ["is_locked"] = opt.IsLocked,
+                        ["is_proceed"] = opt.IsProceed
+                    });
+                }
+            }
+            eventInfo["options"] = options;
+        }
+        catch (Exception ex)
+        {
+            eventInfo["error"] = $"Failed to read event state: {ex.Message}";
+        }
+        return eventInfo;
     }
 
     /// <summary>

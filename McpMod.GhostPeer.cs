@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Godot;
 using HarmonyLib;
@@ -8,10 +9,13 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Characters;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
+using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
+using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 
@@ -27,6 +31,67 @@ public static partial class McpMod
 
     // Set of ghost peer IDs for fast Harmony patch lookup
     private static readonly HashSet<ulong> _ghostPeerIds = new();
+
+    /// <summary>
+    /// Find the lobby NetService by walking the Godot scene tree and checking
+    /// for any node with a Lobby property (StartRunLobby). Works for all lobby
+    /// types (character select, custom run, etc.).
+    /// </summary>
+    private static INetGameService? FindLobbyNetService()
+    {
+        var tree = Engine.GetMainLoop() as SceneTree;
+        if (tree?.Root == null) return null;
+
+        return FindLobbyInTree(tree.Root);
+    }
+
+    private static INetGameService? FindLobbyInTree(Node node)
+    {
+        // Check if this node has a Lobby property of type StartRunLobby
+        var lobbyProp = node.GetType().GetProperty("Lobby",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (lobbyProp != null && typeof(StartRunLobby).IsAssignableFrom(lobbyProp.PropertyType))
+        {
+            var lobby = lobbyProp.GetValue(node) as StartRunLobby;
+            if (lobby?.NetService != null)
+                return lobby.NetService;
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            var result = FindLobbyInTree(child);
+            if (result != null) return result;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Dump top-level scene tree node types for debugging lobby detection.
+    /// </summary>
+    private static string DiagnosticSceneTreeDump()
+    {
+        try
+        {
+            var tree = Engine.GetMainLoop() as SceneTree;
+            if (tree?.Root == null) return "no scene tree";
+
+            var names = new List<string>();
+            CollectNodeTypes(tree.Root, names, 0, maxDepth: 3);
+            return string.Join(", ", names);
+        }
+        catch (Exception ex)
+        {
+            return $"error: {ex.Message}";
+        }
+    }
+
+    private static void CollectNodeTypes(Node node, List<string> names, int depth, int maxDepth)
+    {
+        names.Add($"{node.GetType().Name}({node.Name})");
+        if (depth >= maxDepth || names.Count > 50) return;
+        foreach (var child in node.GetChildren())
+            CollectNodeTypes(child, names, depth + 1, maxDepth);
+    }
 
     /// <summary>
     /// Harmony patch: no-op SendMessageToClient for ghost peer IDs.
@@ -98,6 +163,23 @@ public static partial class McpMod
     }
 
     /// <summary>
+    /// Harmony postfix: return "Claude" as the player name for ghost peer IDs.
+    /// </summary>
+    [HarmonyPatch(typeof(PlatformUtil), "GetPlayerName", new Type[] { typeof(PlatformType), typeof(ulong) })]
+    private static class GhostPlayerNamePatch
+    {
+        static bool Prefix(ulong playerId, ref string __result)
+        {
+            if (_ghostPeerIds.Contains(playerId))
+            {
+                __result = "Claude";
+                return false; // skip original
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Harmony postfix: after CombatStateSynchronizer.StartSync(), inject ghost player data
     /// so the sync doesn't hang waiting for the ghost's SyncPlayerDataMessage.
     /// </summary>
@@ -117,10 +199,22 @@ public static partial class McpMod
     /// </summary>
     internal static Dictionary<string, object?> AddGhostPeer(string characterName)
     {
-        if (!RunManager.Instance.NetService.Type.IsMultiplayer())
-            return Error("Not in a multiplayer session");
+        if (RunManager.Instance == null)
+            return Error("RunManager.Instance is null — game not fully initialized");
 
-        if (RunManager.Instance.NetService.Type != NetGameType.Host)
+        // During lobby phase, RunManager.NetService is null — find it via scene tree
+        var netService = RunManager.Instance.NetService ?? FindLobbyNetService();
+        if (netService == null)
+        {
+            // Diagnostic: dump scene tree node types to help debug
+            var diag = DiagnosticSceneTreeDump();
+            return Error($"NetService is null — lobby not found in scene tree. Nodes: {diag}");
+        }
+
+        if (!netService.Type.IsMultiplayer())
+            return Error($"Not in a multiplayer session (NetService.Type = {netService.Type})");
+
+        if (netService.Type != NetGameType.Host)
             return Error("Only the host can add ghost peers");
 
         if (_ghostPeerIds.Contains(GhostPeerId))
@@ -130,7 +224,7 @@ public static partial class McpMod
         if (character == null)
             return Error($"Unknown character: {characterName}. Valid: ironclad, silent, defect, regent");
 
-        var hostService = (NetHostGameService)RunManager.Instance.NetService;
+        var hostService = (NetHostGameService)netService;
 
         // Step 1: Register ghost as a connected peer
         _ghostPeerIds.Add(GhostPeerId);
@@ -195,6 +289,10 @@ public static partial class McpMod
     /// </summary>
     private static void InjectGhostCombatSync()
     {
+        // Ensure ghost players are registered (they may not be yet at first sync)
+        if (_ghostPlayers.Count == 0 && _ghostPeerIds.Count > 0)
+            RegisterGhostPlayers();
+
         if (_ghostPlayers.Count == 0) return;
 
         var hostService = RunManager.Instance.NetService as NetHostGameService;
@@ -244,6 +342,35 @@ public static partial class McpMod
         if (!_ghostPeerIds.Contains(GhostPeerId))
             return Error("No ghost peer is active");
 
+        // If in an active run, simulate a disconnect so the game stops waiting for the ghost
+        if (RunManager.Instance.IsInProgress)
+        {
+            var hostService = RunManager.Instance.NetService as NetHostGameService;
+            if (hostService != null)
+            {
+                // Temporarily remove from ghost IDs so the DisconnectClient patch doesn't block
+                _ghostPeerIds.Remove(GhostPeerId);
+                try
+                {
+                    // Use reflection to construct NetErrorInfo(NetError.Quit, true)
+                    // since the types are in an ambiguous namespace
+                    var netErrorType = hostService.GetType().Assembly.GetType("MegaCrit.Sts2.Core.Multiplayer.NetError")
+                        ?? hostService.GetType().Assembly.GetTypes().First(t => t.Name == "NetError" && t.IsEnum);
+                    var netErrorInfoType = hostService.GetType().Assembly.GetTypes().First(t => t.Name == "NetErrorInfo");
+                    var quitValue = Enum.Parse(netErrorType, "Quit");
+                    var errorInfo = Activator.CreateInstance(netErrorInfoType, quitValue, true);
+                    var disconnectMethod = hostService.GetType().GetMethod("OnPeerDisconnected",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    disconnectMethod!.Invoke(hostService, new object[] { GhostPeerId, errorInfo! });
+                    GD.Print($"[STS2 MCP] Ghost peer disconnected from active run");
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[STS2 MCP] Ghost disconnect failed: {ex.Message}");
+                }
+            }
+        }
+
         _ghostPlayers.Remove(GhostPeerId);
         _ghostPeerIds.Remove(GhostPeerId);
 
@@ -252,7 +379,7 @@ public static partial class McpMod
         return new Dictionary<string, object?>
         {
             ["status"] = "ok",
-            ["message"] = "Ghost peer removed"
+            ["message"] = "Ghost peer removed and disconnected"
         };
     }
 

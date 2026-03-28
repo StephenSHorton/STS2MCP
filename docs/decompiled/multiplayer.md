@@ -431,7 +431,7 @@ Mid-action choice sync (e.g., target selection during card play):
 | `ActionQueueSynchronizer` | Action ordering & execution | Yes (play cards, end turn) | Yes |
 | `CombatStateSynchronizer` | Pre-combat player state sync | Yes (send `SyncPlayerDataMessage`) | Yes — hangs at `WaitForSync` |
 | `MapSelectionSynchronizer` | Map node vote tracking | Yes (send map vote) | Yes — hangs until all vote |
-| `EventSynchronizer` | Shared event option votes | Yes (shared events only) | Yes — hangs on shared events |
+| `EventSynchronizer` | Shared event option votes; access via `RunManager.Instance.EventSynchronizer` | Yes (shared events only) | Yes — hangs on shared events |
 | `TreasureRoomRelicSynchronizer` | Treasure relic bidding | Yes (pick a relic) | Yes — hangs until all bid |
 | `ActChangeSynchronizer` | Act transition voting | Yes (vote to advance) | Yes — hangs until all vote |
 | `ChecksumTracker` | State divergence detection | No — ghost IS host state | Safe (no separate state) |
@@ -447,6 +447,78 @@ Mid-action choice sync (e.g., target selection during card play):
 - `LocalContext.GetMe(RunState)` → `Player` or null
 - `LocalContext.IsMe(Player)` → bool
 - Used throughout the mod to distinguish local vs remote players
+
+## Ghost Peer Testing Findings
+
+### Lobby Initialization & NetService Lifecycle
+
+`RunManager.Instance.NetService` is **NULL during the lobby phase**. The `NetHostGameService` instance lives at `NCharacterSelectScreen.Lobby.NetService` (from the `StartRunLobby` object). It only gets copied to `RunManager.Instance.NetService` when `SetUpNewMultiPlayer()` is called at run start.
+
+For custom run lobbies, `NCharacterSelectScreen` may not be in the scene tree. The reliable approach is to **walk the Godot scene tree** and find any node with a `Lobby` property of type `StartRunLobby`:
+
+```
+SceneTree → Root → ... → any Node with property Lobby : StartRunLobby → .NetService
+```
+
+This is the only reliable way to access the `NetHostGameService` during the pre-run lobby phase.
+
+### Player Name Resolution
+
+Player names are resolved via `PlatformUtil.GetPlayerName(PlatformType, ulong playerId)`, which calls `SteamFriends.GetFriendPersonaName`. For ghost peers with fake Steam IDs, this returns empty or "unknown" since the ID doesn't correspond to a real Steam account.
+
+**Fix:** Harmony-patch `PlatformUtil.GetPlayerName` to return a custom name when the `playerId` matches the ghost peer's fake ID.
+
+### EventSynchronizer Details
+
+**Access:** `RunManager.Instance.EventSynchronizer`
+
+**Key methods:**
+
+- **`ChooseLocalOption(int)`** — Hardwired to `LocalPlayer`. Not usable for ghost peers; only works for the actual local player.
+- **`ChooseOptionForEvent(Player, int)`** (private) — For non-shared events. Requires reflection to call for a ghost player.
+- **`PlayerVotedForSharedOptionIndex(Player, uint optionIndex, uint pageIndex)`** (private) — For shared events. Requires reflection to call for a ghost player.
+
+**Proper network sync approach:** Rather than using reflection on private methods, the ghost should use `FeedMessageToHost` with the appropriate message types. This ensures real clients receive the broadcast:
+
+- **`OptionIndexChosenMessage`** — namespace `MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync`
+  - Fields: `OptionIndexType type`, `uint optionIndex`, `RunLocation location`
+  - Used for non-shared events and rest sites
+
+- **`VotedForSharedEventOptionMessage`** — for shared event voting
+
+- **`OptionIndexType`** enum: `Event`, `RestSite`
+
+### MapSelectionSynchronizer Details
+
+**Access:** `RunManager.Instance.MapSelectionSynchronizer`
+
+**Key method:** `PlayerVotedForMapCoord(Player, RunLocation source, MapVote? destination)`
+
+**Proper ghost approach:** Create a `VoteForMapCoordAction(ghost, source, mapVote)` and enqueue via `ActionQueueSynchronizer.RequestEnqueue()`. This ensures the vote is broadcast to all clients.
+
+**`MapVote` struct:**
+```csharp
+public struct MapVote {
+    public int mapGenerationCount;  // must match MapSelectionSynchronizer.MapGenerationCount
+    public MapCoord coord;
+}
+```
+
+The `mapGenerationCount` field **must** match `MapSelectionSynchronizer.MapGenerationCount` or the vote will be rejected as stale.
+
+### TreasureRoomRelicSynchronizer
+
+Relic selection in treasure rooms. Ghost picks a relic via `PickRelicAction(Player, int relicIndex)` enqueued through `ActionQueueSynchronizer.RequestEnqueue()`.
+
+### ActChangeSynchronizer
+
+Act transition voting. Ghost votes to advance via `VoteToMoveToNextActAction(Player)` enqueued through `ActionQueueSynchronizer.RequestEnqueue()`.
+
+### PlayerActionsDisabled
+
+`CombatManager.Instance.PlayerActionsDisabled` is a **UI-level flag** for the local player. It is NOT a game-logic constraint — it controls whether the local player's UI input is accepted.
+
+Ghost peers should **bypass this check entirely** and let the `ActionQueueSynchronizer` handle action queueing. The synchronizer has its own combat state management (`SetCombatState`) that correctly pauses/unpauses player queues regardless of the UI flag.
 
 ## Ghost Peer Architecture (Complete Design)
 
@@ -528,6 +600,9 @@ Since the game is **host-authoritative**, we only need to fake the peer on the *
 2. **`CombatStateSynchronizer` injection** — Either:
    a. Harmony-patch `OnSyncPlayerMessageReceived` to inject ghost's data, OR
    b. Directly set `_syncData[GHOST_ID]` via reflection after `StartSync()`
+3. **`PlatformUtil.GetPlayerName`** — Return a custom display name for ghost peer IDs. Without this patch, `SteamFriends.GetFriendPersonaName` returns empty/unknown for fake Steam IDs.
+
+**Note:** During the lobby phase, `RunManager.Instance.NetService` is NULL. The `NetHostGameService` must be accessed by walking the Godot scene tree to find a node with a `Lobby` property of type `StartRunLobby`, then reading `.NetService` from it. See "Lobby Initialization & NetService Lifecycle" above.
 
 ### Risks
 - `SendMessageToClient` to ghost must be intercepted or it crashes the transport

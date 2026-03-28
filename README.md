@@ -4,6 +4,8 @@ A mod for [**Slay the Spire 2**](https://store.steampowered.com/app/2868840/Slay
 
 Singleplayer and multiplayer (co-op) supported. Tested against STS2 `v0.99.1`.
 
+> **Fork**: This is a fork of [Gennadiyev/STS2MCP](https://github.com/Gennadiyev/STS2MCP) with additional features listed below.
+
 > [!warning]
 > This mod allows external programs to read and control your game via a localhost API. Use at your own risk with runs you care less about.
 
@@ -76,6 +78,22 @@ Combat (play cards, use potions, end turn, in-combat card selection), rewards (c
 **Multiplayer (beta)** — all singleplayer features plus:
 
 End-turn voting (submit/undo), map node voting, shared event voting, treasure relic bidding, all-players state summary, per-player ready/vote tracking. Endpoints are mutually guarded (singleplayer endpoint rejects multiplayer runs and vice versa).
+
+**Ghost Peer (experimental)** — inject an AI-controlled player into a real multiplayer game:
+
+AI ghost player joins the lobby, picks a character, and appears as a legitimate player to all connected clients. The ghost participates in all game phases: Neow's Blessing events, map voting, combat (play cards, use potions, end turn), treasure relic bidding, rest sites, shared/individual events, and act transitions. Uses Harmony patches to intercept transport calls and inject game state. The ghost can be dropped mid-run if issues arise. 15 dedicated `ghost_*` MCP tools plus `/playghost` command for autonomous ghost control.
+
+## Fork Changes
+
+This fork ([StephenSHorton/STS2MCP](https://github.com/StephenSHorton/STS2MCP)) adds the following beyond upstream:
+
+- Ghost peer feature for AI-controlled multiplayer companions
+- Null reference crash fixes in state serialization
+- `--mode` flag to reduce MCP tool count (singleplayer/multiplayer/all)
+- Smart state polling and JSONL run logging (from PR #13)
+- Comprehensive multiplayer error handling and null safety (from PR #22)
+- Reverse-engineered multiplayer documentation (docs/decompiled/)
+- `/playghost` slash command for autonomous ghost peer control
 
 ## License
 
