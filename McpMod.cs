@@ -169,6 +169,16 @@ public static partial class McpMod
                 else
                     SendError(response, 405, "Method not allowed");
             }
+            else if (path == "/api/v1/ghost")
+            {
+                // Ghost peer endpoint: control AI ghost players in multiplayer
+                if (request.HttpMethod == "GET")
+                    HandleGetGhostState(request, response);
+                else if (request.HttpMethod == "POST")
+                    HandlePostGhostAction(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else
             {
                 SendError(response, 404, "Not found");
@@ -267,6 +277,99 @@ public static partial class McpMod
         catch (Exception ex)
         {
             SendError(response, 500, $"Multiplayer action failed: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGhostState(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        string format = request.QueryString["format"] ?? "json";
+
+        try
+        {
+            var stateTask = RunOnMainThread(() => BuildGhostState());
+            var state = stateTask.GetAwaiter().GetResult();
+
+            if (format == "markdown")
+            {
+                string md = FormatAsMarkdown(state);
+                SendText(response, md, "text/markdown");
+            }
+            else
+            {
+                SendJson(response, state);
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[STS2 MCP] HandleGetGhostState: {ex}");
+            try
+            {
+                response.StatusCode = 500;
+                SendJson(response, new Dictionary<string, object?>
+                {
+                    ["error"] = $"Failed to read ghost state: {ex.Message}",
+                    ["exception_type"] = ex.GetType().FullName,
+                    ["stack_trace"] = ex.StackTrace
+                });
+            }
+            catch { }
+        }
+    }
+
+    private static void HandlePostGhostAction(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        string body;
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            body = reader.ReadToEnd();
+
+        Dictionary<string, JsonElement>? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+        }
+        catch
+        {
+            SendError(response, 400, "Invalid JSON");
+            return;
+        }
+
+        if (parsed == null || !parsed.TryGetValue("action", out var actionElem))
+        {
+            SendError(response, 400, "Missing 'action' field");
+            return;
+        }
+
+        string action = actionElem.GetString() ?? "";
+
+        // add_ghost can be called before a ghost exists
+        if (action == "add_ghost")
+        {
+            string character = "ironclad";
+            if (parsed.TryGetValue("character", out var charElem))
+                character = charElem.GetString() ?? "ironclad";
+
+            try
+            {
+                var resultTask = RunOnMainThread(() => AddGhostPeer(character));
+                var result = resultTask.GetAwaiter().GetResult();
+                SendJson(response, result);
+            }
+            catch (Exception ex)
+            {
+                SendError(response, 500, $"Add ghost failed: {ex.Message}");
+            }
+            return;
+        }
+
+        try
+        {
+            var resultTask = RunOnMainThread(() => ExecuteGhostAction(action, parsed));
+            var result = resultTask.GetAwaiter().GetResult();
+            SendJson(response, result);
+        }
+        catch (Exception ex)
+        {
+            SendError(response, 500, $"Ghost action failed: {ex.Message}");
         }
     }
 
