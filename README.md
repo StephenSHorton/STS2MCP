@@ -39,6 +39,8 @@ Requires [Python 3.11+](https://www.python.org/) and [uv](https://docs.astral.sh
 
 The MCP server accepts `--host` and `--port` flags if you need non-default settings.
 
+To reduce the number of tools loaded, pass `--mode singleplayer` or `--mode multiplayer` (default: `all`).
+
 Full tool reference: [mcp/README.md](./mcp/README.md) | Raw HTTP API: [docs/raw_api.md](./docs/raw_api.md)
 
 ## For Developers

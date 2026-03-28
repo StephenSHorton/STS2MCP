@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import json
 import sys
+from typing import Callable
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +16,31 @@ from mcp.server.fastmcp import FastMCP
 from run_logger import log_tool_call, log_decision
 
 mcp = FastMCP("sts2")
+
+# ---------------------------------------------------------------------------
+# Tool mode registry — tags functions as "sp", "mp", or "shared" so they can
+# be selectively registered based on the --mode launch flag.
+# ---------------------------------------------------------------------------
+
+_tool_registry: list[tuple[str, Callable, dict]] = []
+
+
+def _register(mode: str, **kwargs):
+    """Decorator that tags a function for deferred registration with mcp.add_tool().
+
+    Args:
+        mode: "sp" (singleplayer), "mp" (multiplayer), or "shared".
+        **kwargs: Passed through to mcp.add_tool() (e.g. name, description).
+    """
+    def decorator(fn: Callable) -> Callable:
+        _tool_registry.append((mode, fn, kwargs))
+        return fn
+    return decorator
+
+
+sp = lambda **kw: _register("sp", **kw)
+mp = lambda **kw: _register("mp", **kw)
+shared = lambda **kw: _register("shared", **kw)
 
 _base_url: str = "http://localhost:15526"
 
@@ -110,7 +136,7 @@ async def _get_smart(params: dict | None = None, wait_for_player_turn: bool = Tr
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def get_game_state(format: str = "markdown") -> str:
     """Get the current Slay the Spire 2 game state.
 
@@ -129,7 +155,7 @@ async def get_game_state(format: str = "markdown") -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def use_potion(slot: int, target: str | None = None) -> str:
     """Use a potion from the player's potion slots.
 
@@ -148,7 +174,7 @@ async def use_potion(slot: int, target: str | None = None) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def proceed_to_map() -> str:
     """Proceed from the current screen to the map.
 
@@ -166,7 +192,7 @@ async def proceed_to_map() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def combat_play_card(card_index: int, target: str | None = None) -> str:
     """[Combat] Play a card from the player's hand.
 
@@ -186,7 +212,7 @@ async def combat_play_card(card_index: int, target: str | None = None) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def combat_end_turn() -> str:
     """[Combat] End the player's current turn."""
     try:
@@ -200,7 +226,7 @@ async def combat_end_turn() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def combat_select_card(card_index: int) -> str:
     """[Combat Selection] Select a card from hand during an in-combat card selection prompt.
 
@@ -216,7 +242,7 @@ async def combat_select_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def combat_confirm_selection() -> str:
     """[Combat Selection] Confirm the in-combat card selection.
 
@@ -234,7 +260,7 @@ async def combat_confirm_selection() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def rewards_claim(reward_index: int) -> str:
     """[Rewards] Claim a reward from the post-combat rewards screen.
 
@@ -253,7 +279,7 @@ async def rewards_claim(reward_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def rewards_pick_card(card_index: int) -> str:
     """[Rewards] Select a card from the card reward selection screen.
 
@@ -266,7 +292,7 @@ async def rewards_pick_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def rewards_skip_card() -> str:
     """[Rewards] Skip the card reward without selecting a card."""
     try:
@@ -280,7 +306,7 @@ async def rewards_skip_card() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def map_choose_node(node_index: int) -> str:
     """[Map] Choose a map node to travel to.
 
@@ -298,7 +324,7 @@ async def map_choose_node(node_index: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def rest_choose_option(option_index: int) -> str:
     """[Rest Site] Choose a rest site option (rest, smith, etc.).
 
@@ -316,7 +342,7 @@ async def rest_choose_option(option_index: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def shop_purchase(item_index: int) -> str:
     """[Shop] Purchase an item from the shop.
 
@@ -334,7 +360,7 @@ async def shop_purchase(item_index: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def event_choose_option(option_index: int) -> str:
     """[Event] Choose an event option.
 
@@ -350,7 +376,7 @@ async def event_choose_option(option_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def event_advance_dialogue() -> str:
     """[Event] Advance ancient event dialogue.
 
@@ -367,7 +393,7 @@ async def event_advance_dialogue() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def deck_select_card(card_index: int) -> str:
     """[Card Selection] Select or deselect a card in the card selection screen.
 
@@ -385,7 +411,7 @@ async def deck_select_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def deck_confirm_selection() -> str:
     """[Card Selection] Confirm the current card selection.
 
@@ -399,7 +425,7 @@ async def deck_confirm_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def deck_cancel_selection() -> str:
     """[Card Selection] Cancel the current card selection.
 
@@ -418,7 +444,7 @@ async def deck_cancel_selection() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def bundle_select(bundle_index: int) -> str:
     """[Bundle Selection] Open a bundle preview.
 
@@ -431,7 +457,7 @@ async def bundle_select(bundle_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def bundle_confirm_selection() -> str:
     """[Bundle Selection] Confirm the currently previewed bundle."""
     try:
@@ -440,7 +466,7 @@ async def bundle_confirm_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def bundle_cancel_selection() -> str:
     """[Bundle Selection] Cancel the current bundle preview."""
     try:
@@ -454,7 +480,7 @@ async def bundle_cancel_selection() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def relic_select(relic_index: int) -> str:
     """[Relic Selection] Select a relic from the relic selection screen.
 
@@ -469,7 +495,7 @@ async def relic_select(relic_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def relic_skip() -> str:
     """[Relic Selection] Skip the relic selection without choosing a relic."""
     try:
@@ -483,7 +509,7 @@ async def relic_skip() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def treasure_claim_relic(relic_index: int) -> str:
     """[Treasure] Claim a relic from the treasure chest.
 
@@ -504,7 +530,7 @@ async def treasure_claim_relic(relic_index: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@sp()
 async def crystal_sphere_set_tool(tool: str) -> str:
     """[Crystal Sphere] Switch the active divination tool.
 
@@ -517,7 +543,7 @@ async def crystal_sphere_set_tool(tool: str) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def crystal_sphere_click_cell(x: int, y: int) -> str:
     """[Crystal Sphere] Click a hidden cell on the Crystal Sphere grid.
 
@@ -531,7 +557,7 @@ async def crystal_sphere_click_cell(x: int, y: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@sp()
 async def crystal_sphere_proceed() -> str:
     """[Crystal Sphere] Continue after the Crystal Sphere minigame finishes."""
     try:
@@ -545,7 +571,7 @@ async def crystal_sphere_proceed() -> str:
 # ===========================================================================
 
 
-@mcp.tool()
+@mp()
 async def mp_get_game_state(format: str = "markdown") -> str:
     """[Multiplayer] Get the current multiplayer game state.
 
@@ -562,7 +588,7 @@ async def mp_get_game_state(format: str = "markdown") -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_combat_play_card(card_index: int, target: str | None = None) -> str:
     """[Multiplayer Combat] Play a card from the local player's hand.
 
@@ -582,7 +608,7 @@ async def mp_combat_play_card(card_index: int, target: str | None = None) -> str
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_combat_end_turn() -> str:
     """[Multiplayer Combat] Submit end-turn vote.
 
@@ -595,7 +621,7 @@ async def mp_combat_end_turn() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_combat_undo_end_turn() -> str:
     """[Multiplayer Combat] Retract end-turn vote.
 
@@ -608,7 +634,7 @@ async def mp_combat_undo_end_turn() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_use_potion(slot: int, target: str | None = None) -> str:
     """[Multiplayer] Use a potion from the local player's potion slots.
 
@@ -625,7 +651,7 @@ async def mp_use_potion(slot: int, target: str | None = None) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_map_vote(node_index: int) -> str:
     """[Multiplayer Map] Vote for a map node to travel to.
 
@@ -641,7 +667,7 @@ async def mp_map_vote(node_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_event_choose_option(option_index: int) -> str:
     """[Multiplayer Event] Choose or vote for an event option.
 
@@ -657,7 +683,7 @@ async def mp_event_choose_option(option_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_event_advance_dialogue() -> str:
     """[Multiplayer Event] Advance ancient event dialogue."""
     try:
@@ -666,7 +692,7 @@ async def mp_event_advance_dialogue() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_rest_choose_option(option_index: int) -> str:
     """[Multiplayer Rest Site] Choose a rest site option (rest, smith, etc.).
 
@@ -681,7 +707,7 @@ async def mp_rest_choose_option(option_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_shop_purchase(item_index: int) -> str:
     """[Multiplayer Shop] Purchase an item from the shop.
 
@@ -696,7 +722,7 @@ async def mp_shop_purchase(item_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_rewards_claim(reward_index: int) -> str:
     """[Multiplayer Rewards] Claim a reward from the post-combat rewards screen.
 
@@ -709,7 +735,7 @@ async def mp_rewards_claim(reward_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_rewards_pick_card(card_index: int) -> str:
     """[Multiplayer Rewards] Select a card from the card reward screen.
 
@@ -722,7 +748,7 @@ async def mp_rewards_pick_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_rewards_skip_card() -> str:
     """[Multiplayer Rewards] Skip the card reward."""
     try:
@@ -731,7 +757,7 @@ async def mp_rewards_skip_card() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_proceed_to_map() -> str:
     """[Multiplayer] Proceed from the current screen to the map.
 
@@ -743,7 +769,7 @@ async def mp_proceed_to_map() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_deck_select_card(card_index: int) -> str:
     """[Multiplayer Card Selection] Select or deselect a card in the card selection screen.
 
@@ -756,7 +782,7 @@ async def mp_deck_select_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_deck_confirm_selection() -> str:
     """[Multiplayer Card Selection] Confirm the current card selection."""
     try:
@@ -765,7 +791,7 @@ async def mp_deck_confirm_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_deck_cancel_selection() -> str:
     """[Multiplayer Card Selection] Cancel the current card selection."""
     try:
@@ -774,7 +800,7 @@ async def mp_deck_cancel_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_bundle_select(bundle_index: int) -> str:
     """[Multiplayer Bundle Selection] Open a bundle preview.
 
@@ -787,7 +813,7 @@ async def mp_bundle_select(bundle_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_bundle_confirm_selection() -> str:
     """[Multiplayer Bundle Selection] Confirm the currently previewed bundle."""
     try:
@@ -796,7 +822,7 @@ async def mp_bundle_confirm_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_bundle_cancel_selection() -> str:
     """[Multiplayer Bundle Selection] Cancel the current bundle preview."""
     try:
@@ -805,7 +831,7 @@ async def mp_bundle_cancel_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_combat_select_card(card_index: int) -> str:
     """[Multiplayer Combat Selection] Select a card from hand during in-combat card selection.
 
@@ -818,7 +844,7 @@ async def mp_combat_select_card(card_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_combat_confirm_selection() -> str:
     """[Multiplayer Combat Selection] Confirm the in-combat card selection."""
     try:
@@ -827,7 +853,7 @@ async def mp_combat_confirm_selection() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_relic_select(relic_index: int) -> str:
     """[Multiplayer Relic Selection] Select a relic (boss relic rewards).
 
@@ -840,7 +866,7 @@ async def mp_relic_select(relic_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_relic_skip() -> str:
     """[Multiplayer Relic Selection] Skip the relic selection."""
     try:
@@ -849,7 +875,7 @@ async def mp_relic_skip() -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_treasure_claim_relic(relic_index: int) -> str:
     """[Multiplayer Treasure] Bid on / claim a relic from the treasure chest.
 
@@ -865,7 +891,7 @@ async def mp_treasure_claim_relic(relic_index: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_crystal_sphere_set_tool(tool: str) -> str:
     """[Multiplayer Crystal Sphere] Switch the active divination tool.
 
@@ -878,7 +904,7 @@ async def mp_crystal_sphere_set_tool(tool: str) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_crystal_sphere_click_cell(x: int, y: int) -> str:
     """[Multiplayer Crystal Sphere] Click a hidden cell on the Crystal Sphere grid.
 
@@ -892,7 +918,7 @@ async def mp_crystal_sphere_click_cell(x: int, y: int) -> str:
         return _handle_error(e)
 
 
-@mcp.tool()
+@mp()
 async def mp_crystal_sphere_proceed() -> str:
     """[Multiplayer Crystal Sphere] Continue after the Crystal Sphere minigame finishes."""
     try:
@@ -906,7 +932,7 @@ async def mp_crystal_sphere_proceed() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@shared()
 async def log_agent_decision(decision: str) -> str:
     """Log your reasoning before a key decision.
 
@@ -925,10 +951,27 @@ def main():
     parser = argparse.ArgumentParser(description="STS2 MCP Server")
     parser.add_argument("--port", type=int, default=15526, help="Game HTTP server port")
     parser.add_argument("--host", type=str, default="localhost", help="Game HTTP server host")
+    parser.add_argument(
+        "--mode",
+        choices=["singleplayer", "multiplayer", "all"],
+        default="all",
+        help="Which tool set to load (default: all)",
+    )
     args = parser.parse_args()
 
     global _base_url
     _base_url = f"http://{args.host}:{args.port}"
+
+    # Register tools matching the selected mode
+    allowed = {"shared"}
+    if args.mode in ("singleplayer", "all"):
+        allowed.add("sp")
+    if args.mode in ("multiplayer", "all"):
+        allowed.add("mp")
+
+    for mode, fn, kwargs in _tool_registry:
+        if mode in allowed:
+            mcp.add_tool(fn, **kwargs)
 
     mcp.run(transport="stdio")
 
