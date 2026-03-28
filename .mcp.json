@@ -2,7 +2,7 @@
   "mcpServers": {
     "sts2": {
       "command": "uv",
-      "args": ["run", "--directory", "./mcp", "python", "server.py", "--mode", "singleplayer"]
+      "args": ["run", "--directory", "./mcp", "python", "server.py", "--mode", "all"]
     }
   }
 }
