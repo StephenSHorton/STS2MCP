@@ -40,6 +40,7 @@ def _register(mode: str, **kwargs):
 
 sp = lambda **kw: _register("sp", **kw)
 mp = lambda **kw: _register("mp", **kw)
+gp = lambda **kw: _register("gp", **kw)
 shared = lambda **kw: _register("shared", **kw)
 
 _base_url: str = "http://localhost:15526"
@@ -51,6 +52,10 @@ def _sp_url() -> str:
 
 def _mp_url() -> str:
     return f"{_base_url}/api/v1/multiplayer"
+
+
+def _gp_url() -> str:
+    return f"{_base_url}/api/v1/ghost"
 
 
 async def _get(params: dict | None = None) -> str:
@@ -82,6 +87,22 @@ async def _mp_post(body: dict) -> str:
         r = await client.post(_mp_url(), json=body)
         r.raise_for_status()
         log_tool_call("mp_" + body.get("action", "unknown"), body, r.text)
+        return r.text
+
+
+async def _gp_get(params: dict | None = None) -> str:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(_gp_url(), params=params)
+        r.raise_for_status()
+        log_tool_call("ghost_get_state", params or {}, r.text)
+        return r.text
+
+
+async def _gp_post(body: dict) -> str:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(_gp_url(), json=body)
+        r.raise_for_status()
+        log_tool_call("ghost_" + body.get("action", "unknown"), body, r.text)
         return r.text
 
 
@@ -927,6 +948,212 @@ async def mp_crystal_sphere_proceed() -> str:
         return _handle_error(e)
 
 
+# ===========================================================================
+# GHOST PEER tools — control AI ghost players via /api/v1/ghost
+# ===========================================================================
+
+
+@gp()
+async def ghost_add(character: str = "ironclad") -> str:
+    """[Ghost] Add an AI-controlled ghost player to the multiplayer lobby.
+
+    Must be called while in a multiplayer lobby as the host, BEFORE the run starts.
+    The ghost appears as a real player to all other connected clients.
+
+    Args:
+        character: Character for the ghost. One of: ironclad, silent, defect, regent.
+    """
+    try:
+        return await _gp_post({"action": "add_ghost", "character": character})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_remove() -> str:
+    """[Ghost] Remove the active ghost peer."""
+    try:
+        return await _gp_post({"action": "remove_ghost"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_get_state(format: str = "markdown") -> str:
+    """[Ghost] Get the game state from the ghost player's perspective.
+
+    Shows the ghost's hand, energy, HP, relics, potions, and the current
+    game screen (combat, map, event, etc.). Enemies are shared across players.
+
+    Args:
+        format: "markdown" for human-readable output, "json" for structured data.
+    """
+    try:
+        return await _gp_get({"format": format})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_play_card(card_index: int, target: str | None = None) -> str:
+    """[Ghost Combat] Play a card from the ghost player's hand.
+
+    Args:
+        card_index: Index of the card in the ghost's hand (0-based).
+        target: Entity ID of the target enemy (e.g. "JAW_WORM_0"). Required for single-target cards.
+    """
+    body: dict = {"action": "play_card", "card_index": card_index}
+    if target is not None:
+        body["target"] = target
+    try:
+        return await _gp_post(body)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_end_turn() -> str:
+    """[Ghost Combat] Submit end-turn vote for the ghost player.
+
+    In multiplayer, the turn ends when ALL players (including the ghost) submit.
+    """
+    try:
+        return await _gp_post({"action": "end_turn"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_undo_end_turn() -> str:
+    """[Ghost Combat] Retract the ghost's end-turn vote."""
+    try:
+        return await _gp_post({"action": "undo_end_turn"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_use_potion(slot: int, target: str | None = None) -> str:
+    """[Ghost] Use a potion from the ghost's potion slots.
+
+    Args:
+        slot: Potion slot index.
+        target: Entity ID of the target enemy. Required for enemy-targeted potions.
+    """
+    body: dict = {"action": "use_potion", "slot": slot}
+    if target is not None:
+        body["target"] = target
+    try:
+        return await _gp_post(body)
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_map_vote(node_index: int) -> str:
+    """[Ghost Map] Vote for a map node on behalf of the ghost.
+
+    The ghost MUST vote — map travel requires all players to agree.
+
+    Args:
+        node_index: 0-based index of the node from the next_options list.
+    """
+    try:
+        return await _gp_post({"action": "map_vote", "index": node_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_event_choose(option_index: int) -> str:
+    """[Ghost Event] Choose or vote for an event option on behalf of the ghost.
+
+    For shared events: the ghost MUST vote or the game hangs.
+    For individual events: immediate choice.
+
+    Args:
+        option_index: 0-based index of the event option.
+    """
+    try:
+        return await _gp_post({"action": "event_choose", "index": option_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_treasure_pick(relic_index: int) -> str:
+    """[Ghost Treasure] Pick a relic from the treasure chest on behalf of the ghost.
+
+    The ghost MUST pick — treasure bidding requires all players to bid.
+
+    Args:
+        relic_index: 0-based index of the relic.
+    """
+    try:
+        return await _gp_post({"action": "treasure_pick", "index": relic_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_rest_choose(option_index: int) -> str:
+    """[Ghost Rest Site] Choose a rest site option for the ghost.
+
+    Per-player choice — no voting needed.
+
+    Args:
+        option_index: 0-based index of the option.
+    """
+    try:
+        return await _gp_post({"action": "rest_choose", "index": option_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_rewards_claim(reward_index: int) -> str:
+    """[Ghost Rewards] Claim a reward for the ghost.
+
+    Args:
+        reward_index: 0-based index of the reward.
+    """
+    try:
+        return await _gp_post({"action": "claim_reward", "index": reward_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_rewards_pick_card(card_index: int) -> str:
+    """[Ghost Rewards] Select a card reward for the ghost.
+
+    Args:
+        card_index: 0-based index of the card.
+    """
+    try:
+        return await _gp_post({"action": "select_card_reward", "card_index": card_index})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_rewards_skip_card() -> str:
+    """[Ghost Rewards] Skip the card reward for the ghost."""
+    try:
+        return await _gp_post({"action": "skip_card_reward"})
+    except Exception as e:
+        return _handle_error(e)
+
+
+@gp()
+async def ghost_proceed() -> str:
+    """[Ghost] Proceed from the current screen to the map for the ghost."""
+    try:
+        return await _gp_post({"action": "proceed"})
+    except Exception as e:
+        return _handle_error(e)
+
+
 # ---------------------------------------------------------------------------
 # Decision Logging
 # ---------------------------------------------------------------------------
@@ -953,7 +1180,7 @@ def main():
     parser.add_argument("--host", type=str, default="localhost", help="Game HTTP server host")
     parser.add_argument(
         "--mode",
-        choices=["singleplayer", "multiplayer", "all"],
+        choices=["singleplayer", "multiplayer", "ghost", "all"],
         default="all",
         help="Which tool set to load (default: all)",
     )
@@ -968,6 +1195,8 @@ def main():
         allowed.add("sp")
     if args.mode in ("multiplayer", "all"):
         allowed.add("mp")
+    if args.mode in ("ghost", "all"):
+        allowed.add("gp")
 
     for mode, fn, kwargs in _tool_registry:
         if mode in allowed:
